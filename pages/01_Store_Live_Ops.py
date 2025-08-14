@@ -16,9 +16,9 @@ colT1, colT2 = st.columns(2)
 with colT1:
     conv_target = st.slider("Conversie‑target (%)", 0, 50, 25, 1) / 100.0
 with colT2:
-    visitors_target = st.number_input("Bezoekers this week target", min_value=0, value=5000, step=100)
+    visitors_target = st.number_input("Bezoekerstarget (deze week)", min_value=0, value=1200, step=50)
 
-st.markdown("#### Live bezetting (nu)")
+st.markdown("#### Live inside")
 live_js = api_get_live_inside([shop_id], st.secrets["API_URL"], st.secrets.get("LIVE_URL"))
 if not friendly_error(live_js, "live-side"):
     live_data = live_js.get("data") or {}
@@ -32,15 +32,15 @@ if not friendly_error(live_js, "live-side"):
     c2.markdown("&nbsp;", unsafe_allow_html=True)
 
 st.markdown("#### Dag & Week KPI's")
-params_y = [("source","shops"), ("period","yesterday"), ("data[]", shop_id)]
+params_y = [("source","shops"), ("period","yesterday"), ("data", shop_id)]
 for k in ["count_in","conversion_rate","turnover","sales_per_visitor"]:
-    params_y.append(("data_output[]", k))
+    params_y.append(("data_output", k))
 js_y = api_get_report(params_y, st.secrets["API_URL"])
 
-params_tw = [("source","shops"), ("period","this_week"), ("data[]", shop_id)]
-params_lw = [("source","shops"), ("period","last_week"), ("data[]", shop_id)]
+params_tw = [("source","shops"), ("period","this_week"), ("data", shop_id)]
+params_lw = [("source","shops"), ("period","last_week"), ("data", shop_id)]
 for k in ["count_in","conversion_rate","turnover","sales_per_visitor"]:
-    params_tw.append(("data_output[]", k)); params_lw.append(("data_output[]", k))
+    params_tw.append(("data_output", k)); params_lw.append(("data_output", k))
 
 js_tw = api_get_report(params_tw, st.secrets["API_URL"])
 js_lw = api_get_report(params_lw, st.secrets["API_URL"])
@@ -62,4 +62,4 @@ if not friendly_error(js_y, "yesterday") and not friendly_error(js_tw, "this_wee
     c2.markdown(f"<div class='pfm-card'><div>👣 Bezoekers (deze week)</div><div class='{vis_class}' style='font-size:28px'>{vis_tw:,}</div></div>".replace(",", "."), unsafe_allow_html=True)
     wow_icon = "↑" if wow >= 0 else "↓"
     wow_class = "kpi-good" if wow >= 0 else "kpi-bad"
-    c3.markdown(f"<div class='pfm-card'><div>WoW Bezoekers</div><div class='{wow_class}' style='font-size:28px'>{wow_icon} {fmt_pct(abs(wow),1)}</div></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='pfm-card'><div>WoW (visitors)</div><div class='{wow_class}' style='font-size:28px'>{wow_icon} {fmt_pct(abs(wow))}</div></div>", unsafe_allow_html=True)
