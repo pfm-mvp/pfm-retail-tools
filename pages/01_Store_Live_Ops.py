@@ -7,7 +7,8 @@ st.set_page_config(page_title="Store Live Ops", page_icon="🟢", layout="wide")
 inject_css()
 
 name_by_id = SHOP_NAME_MAP
-id_by_name = {v:k for k,v in name_by_id.items()}
+id_by_name = {v: k for k, v in name_by_id.items()}
+
 shop_name = st.selectbox("Kies winkel", list(id_by_name.keys()))
 shop_id = id_by_name[shop_name]
 
@@ -18,32 +19,37 @@ with colT1:
 with colT2:
     visitors_target = st.number_input("Bezoekerstarget (deze week)", min_value=0, value=1200, step=50)
 
+# --- LIVE INSIDE (POST naar /report/live-inside)
 st.markdown("#### Live inside")
-live_js = api_get_live_inside([shop_id], st.secrets["API_URL"], st.secrets.get("LIVE_URL"))
-if not friendly_error(live_js, "live-side"):
+live_js = api_get_live_inside([shop_id])
+if not friendly_error(live_js, "live-inside"):
     live_data = live_js.get("data") or {}
     inside = 0
     if isinstance(live_data, dict):
-        for k,v in live_data.items():
-            if str(k) == str(shop_id) and isinstance(v, dict):
-                inside = v.get("inside") or v.get("count_inside") or v.get("current") or 0
+        blob = live_data.get(str(shop_id)) or live_data.get(shop_id)
+        if isinstance(blob, dict):
+            inside = blob.get("inside") or blob.get("count_inside") or blob.get("current") or 0
+
     c1, c2 = st.columns(2)
     c1.metric("👥 Nu binnen", int(inside))
     c2.markdown("&nbsp;", unsafe_allow_html=True)
 
+# --- DAG & WEEK KPI's (POST naar /get-report, zonder brackets)
 st.markdown("#### Dag & Week KPI's")
+
 params_y = [("source","shops"), ("period","yesterday"), ("data", shop_id)]
 for k in ["count_in","conversion_rate","turnover","sales_per_visitor"]:
     params_y.append(("data_output", k))
-js_y = api_get_report(params_y, st.secrets["API_URL"])
+js_y = api_get_report(params_y)
 
 params_tw = [("source","shops"), ("period","this_week"), ("data", shop_id)]
 params_lw = [("source","shops"), ("period","last_week"), ("data", shop_id)]
 for k in ["count_in","conversion_rate","turnover","sales_per_visitor"]:
-    params_tw.append(("data_output", k)); params_lw.append(("data_output", k))
+    params_tw.append(("data_output", k))
+    params_lw.append(("data_output", k))
 
-js_tw = api_get_report(params_tw, st.secrets["API_URL"])
-js_lw = api_get_report(params_lw, st.secrets["API_URL"])
+js_tw = api_get_report(params_tw)
+js_lw = api_get_report(params_lw)
 
 if not friendly_error(js_y, "yesterday") and not friendly_error(js_tw, "this_week") and not friendly_error(js_lw, "last_week"):
     df_y = normalize_vemcount_daylevel(js_y)
@@ -58,8 +64,10 @@ if not friendly_error(js_y, "yesterday") and not friendly_error(js_tw, "this_wee
     c1, c2, c3 = st.columns(3)
     conv_class = "kpi-good" if conv_y >= conv_target else "kpi-bad"
     c1.markdown(f"<div class='pfm-card'><div>🛒 Conversie (gisteren)</div><div class='{conv_class}' style='font-size:28px'>{fmt_pct(conv_y)}</div></div>", unsafe_allow_html=True)
+
     vis_class = "kpi-good" if vis_tw >= visitors_target else "kpi-bad"
     c2.markdown(f"<div class='pfm-card'><div>👣 Bezoekers (deze week)</div><div class='{vis_class}' style='font-size:28px'>{vis_tw:,}</div></div>".replace(",", "."), unsafe_allow_html=True)
+
     wow_icon = "↑" if wow >= 0 else "↓"
     wow_class = "kpi-good" if wow >= 0 else "kpi-bad"
     c3.markdown(f"<div class='pfm-card'><div>WoW (visitors)</div><div class='{wow_class}' style='font-size:28px'>{wow_icon} {fmt_pct(abs(wow))}</div></div>", unsafe_allow_html=True)
