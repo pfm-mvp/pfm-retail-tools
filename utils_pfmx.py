@@ -1,246 +1,114 @@
-# utils_pfmx.py — clean import; no side-effects
+
 import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
-from urllib.parse import urlsplit, urlencode
-from typing import Optional, List, Tuple
-
-PFM_PURPLE = "#762181"
-PFM_RED = "#F04438"
-
-# ---------------------------
-# UI helpers
-# ---------------------------
-def get_brand_colors():
-    succ = st.secrets.get("SUCCESS_COLOR", "#00A650")
-    dang = st.secrets.get("DANGER_COLOR", "#D7263D")
-    return succ, dang
+from urllib.parse import urlencode
+from typing import Optional, List, Tuple, Dict, Any
 
 def inject_css():
-    succ, dang = get_brand_colors()
-    css = "<style>\n"
-    css += '[data-testid="stSidebar"] { background-color: %s; }\n' % PFM_RED
-    css += '[data-testid="stSidebar"] *, [data-testid="stSidebar"] a { color: #FFFFFF !important; }\n'
-    css += '.stButton button, .stDownloadButton button { background:#762181 !important; color:#fff !important; border-radius:12px !important; border:none !important; }\n'
-    css += '.pfm-card { border:1px solid #e6e6e6; box-shadow:0 1px 3px rgba(0,0,0,.05); background:#fff; padding:16px; border-radius:16px; }\n'
-    css += '.kpi-good { color:%s; font-weight:700; }\n' % succ
-    css += '.kpi-bad { color:%s; font-weight:700; }\n' % dang
-    css += "</style>"
-    st.markdown(css, unsafe_allow_html=True)
+    st.markdown('<style>.kpi{padding:12px 14px;border:1px solid #EEE;border-radius:16px;}</style>', unsafe_allow_html=True)
 
-# ---------------------------
-# Secrets & endpoints
-# ---------------------------
-def _safe_get_secret(name: str) -> Optional[str]:
-    try:
-        val = st.secrets.get(name)
-    except Exception:
-        return None
-    if val is None:
-        return None
-    s = str(val).strip()
-    return s if s else None
-
-def _host_root_from_api_url(api_url: str) -> str:
-    parts = urlsplit(api_url)
-    if not parts.scheme or not parts.netloc:
-        raise ValueError(f"API_URL is geen geldige URL: {api_url!r}")
-    return f"{parts.scheme}://{parts.netloc}"
-
-def _derive_report_url(api_url_secret: str) -> str:
-    """Exact /get-report indien zo opgegeven; anders <host>/get-report."""
-    api_url = api_url_secret.strip()
-    if api_url.rstrip("/").endswith("/get-report"):
-        return api_url.rstrip("/")
-    return f"{_host_root_from_api_url(api_url)}/get-report"
-
-# (optioneel; niet per se gebruikt, maar handig om achter de hand te hebben)
-def _derive_live_url(api_url_secret: str, live_override: Optional[str] = None) -> str:
-    root = _host_root_from_api_url(api_url_secret)
-    if live_override:
-        lo = live_override.strip()
-        if lo.startswith(("http://", "https://")):
-            return lo.rstrip("/")
-        return f"{root}/{lo.lstrip('/').rstrip('/')}"
-    return f"{root}/report/live-inside"
-
-# ---------------------------
-# Formatting helpers
-# ---------------------------
 def fmt_eur(x):
+    try: return '€ {:,.0f}'.format(float(x)).replace(',', '.')
+    except: return '€ 0'
+
+def fmt_pct(x):
+    try: return '{:.1f}%'.format(float(x)*100.0)
+    except: return '0.0%'
+
+def _normalize_base(url: str) -> str:
+    if not url: return ''
+    if '://' not in url: url = 'https://' + url
+    return url.rstrip('/')
+
+def _api_base() -> str:
+    return _normalize_base(st.secrets.get('API_URL','').strip())
+
+def build_params_reports_plain(source: str, period: str, data_ids: List[int], outputs: List[str],
+                               date_from: Optional[str]=None, date_to: Optional[str]=None,
+                               period_step: Optional[str]=None, extra: Optional[List[Tuple[str,str]]]=None):
+    params = [('source', source), ('period', period)]
+    if date_from: params.append(('date_from', date_from))
+    if date_to: params.append(('date_to', date_to))
+    if period_step: params.append(('period_step', period_step))
+    params += [('data', int(i)) for i in data_ids]
+    params += [('data_output', o) for o in outputs]
+    if extra: params += list(extra)
+    return params
+
+def _post_json(full_url: str, timeout: int=90) -> Dict[str, Any]:
     try:
-        return f"€{x:,.0f}".replace(",", ".")
-    except Exception:
-        return "€0"
-
-def fmt_pct(x, digits=1):
-    try:
-        return f"{x*100:.{digits}f}%".replace(".", ",")
-    except Exception:
-        return "0%"
-
-# --- params builders (reports) ---
-def build_params_reports_plain(source: str, period: Optional[str], data_ids: List[int], outputs: List[str]) -> List[Tuple[str,str]]:
-    """data=..., data_output=... (herhaald, zónder brackets)"""
-    p: List[Tuple[str,str]] = [("source", source)]
-    if period:
-        p.append(("period", period))
-    for d in data_ids:
-        p.append(("data", str(int(d))))
-    for o in outputs:
-        p.append(("data_output", str(o)))
-    return p
-
-def build_params_reports_brackets(source: str, period: Optional[str], data_ids: List[int], outputs: List[str]) -> List[Tuple[str,str]]:
-    """Alleen houden als je elders brackets nodig hebt; proxy verwacht plain keys."""
-    p: List[Tuple[str,str]] = [("source", source)]
-    if period:
-        p.append(("period", period))
-    for d in data_ids:
-        p.append(("data[]", str(int(d))))
-    for o in outputs:
-        p.append(("data_output[]", str(o)))
-    return p
-
-# ---------------------------
-# HTTP (POST; raw URL zonder params=)
-# ---------------------------
-def api_get_report(params: List[Tuple[str, object]], timeout: int = 40):
-    """
-    POST naar exact de base uit secrets (meestal /get-report),
-    met herhaalde keys ZONDER brackets (data=..., data_output=...).
-    """
-    api_url_secret = _safe_get_secret("API_URL")
-    if not api_url_secret:
-        return {
-            "_error": True,
-            "status": 0,
-            "text": "API_URL secret ontbreekt of is leeg",
-            "_url": "<missing:API_URL>",
-            "_method": "POST"
-        }
-
-    base = api_url_secret.rstrip("/")  # verwacht: https://vemcount-agent.onrender.com/get-report
-    qs   = urlencode(params, doseq=True).replace("%3A", ":")  # corrigeer 09%3A00 -> 09:00
-    url  = f"{base}?{qs}"
-
-    try:
-        resp = requests.post(url, timeout=timeout)  # géén params=
-        if resp.status_code >= 400:
-            return {
-                "_error": True,
-                "status": resp.status_code,
-                "text": resp.text,
-                "_url": resp.url,
-                "_method": "POST"
-            }
-        return resp.json()
+        r = requests.post(full_url, timeout=timeout); r.raise_for_status(); return r.json()
     except Exception as e:
-        return {
-            "_error": True,
-            "status": 0,
-            "text": f"{type(e).__name__}: {e}",
-            "_url": url,
-            "_method": "POST"
-        }
+        return {'_error': True, 'status': getattr(e,'response',None).status_code if hasattr(e,'response') and e.response is not None else None, '_url': full_url, '_method': 'POST', 'exception': str(e)}
 
-def api_get_live_inside(shop_ids: List[int], source: str = "locations", timeout: int = 15):
-    """
-    POST naar <HOST>/report/live-inside met ?source=locations&data=<id>
-    (zònder brackets).
-    """
-    api_url_secret = _safe_get_secret("API_URL")
-    if not api_url_secret:
-        return {
-            "_error": True,
-            "status": 0,
-            "text": "API_URL secret ontbreekt of is leeg",
-            "_url": "<missing:API_URL>",
-            "_method": "POST"
-        }
+def api_get_report(params, timeout: int=90):
+    base = _api_base()
+    if not base: return {'_error': True, 'status': None, '_url': '', '_method': 'POST', 'exception': 'Missing API_URL secret'}
+    path = '/get-report'
+    full = (base if base.endswith(path) else base+path) + '?' + urlencode(params, doseq=True)
+    return _post_json(full, timeout=timeout)
 
-    parts = urlsplit(api_url_secret.rstrip("/"))
-    root  = f"{parts.scheme}://{parts.netloc}"
-    live_url = f"{root}/report/live-inside"
+def api_get_live_inside(shop_ids: List[int], source: str='locations', timeout: int=45):
+    base = _api_base()
+    if not base: return {'_error': True, 'status': None, '_url': '', '_method': 'POST', 'exception': 'Missing API_URL secret'}
+    p = [('source', source)] + [('data', int(i)) for i in shop_ids]
+    path = '/report/live-inside'
+    full = (base if base.endswith(path) else base+path) + '?' + urlencode(p, doseq=True)
+    return _post_json(full, timeout=timeout)
 
-    params = [("source", source)]
-    for sid in shop_ids:
-        params.append(("data", int(sid)))  # zonder []
+def _as_float(x):
+    try: return float(x)
+    except: return 0.0
 
-    qs  = urlencode(params, doseq=True)
-    url = f"{live_url}?{qs}"
-
-    try:
-        resp = requests.post(url, timeout=timeout)  # géén params=
-        if resp.status_code >= 400:
-            return {
-                "_error": True,
-                "status": resp.status_code,
-                "text": resp.text,
-                "_url": resp.url,
-                "_method": "POST"
-            }
-        return resp.json()
-    except Exception as e:
-        return {
-            "_error": True,
-            "status": 0,
-            "text": f"{type(e).__name__}: {e}",
-            "_url": url,
-            "_method": "POST"
-        }
-
-# ---------------------------
-# Normalizers & error UI
-# ---------------------------
-def normalize_vemcount_daylevel(resp_json, kpis=("count_in", "conversion_rate", "turnover", "sales_per_visitor")):
-    if not isinstance(resp_json, dict) or resp_json.get("_error"):
-        return pd.DataFrame()
+def normalize_vemcount_daylevel(js: Dict[str, Any]) -> pd.DataFrame:
+    if not isinstance(js, dict) or 'data' not in js: return pd.DataFrame()
     rows = []
-    data = resp_json.get("data", {})
-    for day_key, day_blob in (data.items() if isinstance(data, dict) else []):
-        day = pd.to_datetime(day_key.replace("date_", ""), errors="coerce")
-        if day is pd.NaT:
-            continue
-        for loc_id, loc_blob in (day_blob.items() if isinstance(day_blob, dict) else []):
-            if not isinstance(loc_blob, dict):
-                continue
-            if "data" in loc_blob:
-                d = loc_blob["data"]
-                row = {"date": day, "shop_id": int(loc_id)}
-                for k in kpis:
-                    row[k] = d.get(k)
-                rows.append(row)
-            elif "dates" in loc_blob:
-                vals = [v.get("data", {}) for v in loc_blob["dates"].values()]
-                if not vals:
-                    continue
-                agg = {"date": day, "shop_id": int(loc_id)}
-                for k in kpis:
-                    series = [x.get(k) for x in vals if x and x.get(k) is not None]
-                    if not series:
-                        agg[k] = None
-                    elif k in {"count_in", "turnover"}:
-                        agg[k] = float(np.nansum(series))
-                    else:
-                        agg[k] = float(np.nanmean(series))
-                rows.append(agg)
-    if not rows:
-        return pd.DataFrame(columns=["date", "shop_id", *kpis])
-    df = pd.DataFrame(rows).sort_values(["shop_id", "date"]).reset_index(drop=True)
-    if "sales_per_visitor" in df.columns:
-        mask = df["sales_per_visitor"].isna()
-        if "turnover" in df.columns and "count_in" in df.columns:
-            df.loc[mask, "sales_per_visitor"] = (
-                df.loc[mask, "turnover"] / df.loc[mask, "count_in"].replace(0, np.nan)
-            )
+    for date_key, by_shop in (js.get('data') or {}).items():
+        try: date = pd.to_datetime(date_key.replace('date_',''), errors='coerce').date()
+        except: date = None
+        if not isinstance(by_shop, dict): continue
+        for sid, payload in by_shop.items():
+            try: shop_id = int(sid)
+            except:
+                try: shop_id = int(payload.get('shop_id'))
+                except: continue
+            if not isinstance(payload, dict): continue
+            if 'data' in payload and isinstance(payload['data'], dict):
+                kpis = payload['data']
+                rows.append({'date': date, 'shop_id': shop_id,
+                             'count_in': _as_float(kpis.get('count_in')),
+                             'conversion_rate': _as_float(kpis.get('conversion_rate')),
+                             'turnover': _as_float(kpis.get('turnover')),
+                             'sales_per_visitor': _as_float(kpis.get('sales_per_visitor') or 0)})
+            elif 'dates' in payload and isinstance(payload['dates'], dict):
+                cin=tov=conv_num=conv_den=spv_num=spv_cnt=0.0
+                for ts, slot in payload['dates'].items():
+                    if not isinstance(slot, dict): continue
+                    k = slot.get('data', {})
+                    cin += _as_float(k.get('count_in')); tov += _as_float(k.get('turnover'))
+                    cr=k.get('conversion_rate'); spv=k.get('sales_per_visitor')
+                    if cr is not None:
+                        try: conv_num += float(cr); conv_den += 1
+                        except: pass
+                    if spv is not None:
+                        try: spv_num += float(spv); spv_cnt += 1
+                        except: pass
+                rows.append({'date': date, 'shop_id': shop_id, 'count_in': cin, 'turnover': tov,
+                             'conversion_rate': (conv_num/conv_den) if conv_den>0 else 0.0,
+                             'sales_per_visitor': (spv_num/spv_cnt) if spv_cnt>0 else 0.0})
+    df = pd.DataFrame(rows)
+    if df.empty: return df
+    if 'sales_per_visitor' in df.columns:
+        mask = df['sales_per_visitor'].isna()
+        if 'turnover' in df.columns and 'count_in' in df.columns:
+            df.loc[mask, 'sales_per_visitor'] = df.loc[mask, 'turnover'] / df.loc[mask, 'count_in'].replace(0, np.nan)
     return df
 
-def friendly_error(js, context: str = ""):
-    if isinstance(js, dict) and js.get("_error"):
-        st.error(f"Geen data ontvangen ({context}). Controleer API_URL/LIVE_URL of periode/IDs. [status={js.get('status')}]")
-        extra = f"{js.get('_method','')} {js.get('_url','')}"
-        st.caption(f"↪ {extra}")
+def friendly_error(js, context: str=''):
+    if isinstance(js, dict) and js.get('_error'):
+        st.error(f'Geen data ontvangen ({context}). Controleer API_URL of periode/IDs. [status={js.get("status")}]')
+        st.caption(f"↪ {js.get('_method','')} {js.get('_url','')}")
         return True
     return False
