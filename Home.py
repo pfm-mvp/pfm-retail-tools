@@ -9,7 +9,7 @@ st.markdown("""
 <p style="color:#555;margin-top:-6px;">Unlocking Location Potential — live operations, regional radar, portfolio benchmarks & ROI scenarios.</p>
 """, unsafe_allow_html=True)
 
-col1, spacer, col2 = st.columns([1, 0.06, 1])
+col1, spacer, col2 = st.columns([1, 0.5, 1])
 with col1:
     st.markdown("""
     <div style="border:1px solid #eee;border-radius:16px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.05)">
