@@ -1,5 +1,3 @@
-
-# Vul je mapping hier aan. Voor zones vs locations kies je in de app zelf.
 SHOP_NAME_MAP = {
     32224: "Amersfoort",
     31977: "Amsterdam",

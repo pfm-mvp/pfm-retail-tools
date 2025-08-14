@@ -1,33 +1,41 @@
-
+import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
-import plotly.express as px
-import streamlit as st
 
-# ---------- Styling ----------
 PFM_PURPLE = "#762181"
 PFM_RED = "#F04438"
-PFM_ORANGE = "#F59E0B"
 
-def inject_css(st):
-    st.markdown(
-        """
-        <style>
-        @import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700&display=swap');
-        html, body, [class*="css"]  { font-family: 'Instrument Sans', sans-serif; }
-        .pill {display:inline-block;padding:6px 10px;border-radius:999px;background:#f3e8ff;color:#4a148c;margin-right:6px;font-weight:600}
-        .pfm-btn {background: %s!important;color:white!important;border-radius: 12px!important;}
-        .card {border:1px solid #eee;border-radius:16px;padding:16px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
-        .kpi {font-size:28px;font-weight:700}
-        .kpi-sub {color:#666;font-size:12px}
-        </style>
-        """ % PFM_PURPLE,
-        unsafe_allow_html=True
-    )
+def get_brand_colors():
+    succ = st.secrets.get("SUCCESS_COLOR", "#00A650")
+    dang = st.secrets.get("DANGER_COLOR", "#D7263D")
+    return succ, dang
 
-# ---------- Formatters ----------
+def inject_css():
+    succ, dang = get_brand_colors()
+    st.markdown(f"""
+    <style>
+    [data-testid="stSidebar"] {{
+        background-color: {PFM_RED};
+    }}
+    [data-testid="stSidebar"] *, [data-testid="stSidebar"] a {{
+        color: #FFFFFF !important;
+    }}
+    .stButton button, .stDownloadButton button {{
+        background-color: {PFM_PURPLE} !important;
+        color: #FFFFFF !important;
+        border-radius: 12px !important;
+        border: none !important;
+    }}
+    .pfm-card {{
+        border:1px solid #e6e6e6;border-radius:16px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.05);
+        background:#FFFFFF;
+    }}
+    .kpi-good {{ color: {succ}; font-weight:700; }}
+    .kpi-bad  {{ color: {dang}; font-weight:700; }}
+    </style>
+    """, unsafe_allow_html=True)
+
 def fmt_eur(x):
     try:
         return f"€{x:,.0f}".replace(",", ".")
@@ -40,53 +48,55 @@ def fmt_pct(x, digits=1):
     except Exception:
         return "0%"
 
-# ---------- API Helpers ----------
 def api_get_report(params, base_url):
     url = f"{base_url.rstrip('/')}/get-report"
-    r = requests.get(url, params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    resp = requests.get(url, params=params, timeout=40)
+    if resp.status_code >= 400:
+        return {"_error": True, "status": resp.status_code, "text": resp.text}
+    return resp.json()
 
-def api_get_live_inside(source, ids, base_url, live_url=None):
+def api_get_live_inside(shop_ids, base_url, live_url=None):
     if live_url is None:
         live_url = f"{base_url.rstrip('/')}/report/live-inside"
-    param_list = [("source", source)]
-    for _id in ids:
-        param_list.append(("data", int(_id)))
-    r = requests.get(live_url, params=param_list, timeout=15)
-    r.raise_for_status()
-    return r.json()
+    param_list = [("source", "locations")]
+    for sid in shop_ids:
+        param_list.append(("data", int(sid)))
+    resp = requests.get(live_url, params=param_list, timeout=15)
+    if resp.status_code >= 400:
+        return {"_error": True, "status": resp.status_code, "text": resp.text}
+    return resp.json()
 
-# ---------- Normalizers ----------
 def normalize_vemcount_daylevel(resp_json, kpis=("count_in","conversion_rate","turnover","sales_per_visitor")):
+    if not isinstance(resp_json, dict) or "_error" in resp_json:
+        return pd.DataFrame()
     rows = []
     data = resp_json.get("data", {})
-    for day_key, day_blob in data.items():
-        date_str = day_key.replace("date_","")
-        locations = day_blob if isinstance(day_blob, dict) else {}
-        for loc_id, loc_blob in locations.items():
+    for day_key, day_blob in (data.items() if isinstance(data, dict) else []):
+        day = pd.to_datetime(day_key.replace("date_",""), errors="coerce")
+        if day is pd.NaT:
+            continue
+        for loc_id, loc_blob in (day_blob.items() if isinstance(day_blob, dict) else []):
+            if not isinstance(loc_blob, dict):
+                continue
             if "data" in loc_blob:
                 d = loc_blob["data"]
-                row = {"date": pd.to_datetime(date_str), "shop_id": int(loc_id)}
+                row = {"date": day, "shop_id": int(loc_id)}
                 for k in kpis:
                     row[k] = d.get(k)
                 rows.append(row)
             elif "dates" in loc_blob:
-                ksum = {"count_in","turnover"}
-                kmean = {"conversion_rate","sales_per_visitor"}
-                agg = {"date": pd.to_datetime(date_str), "shop_id": int(loc_id)}
-                vals = list(loc_blob["dates"].values())
+                vals = [v.get("data", {}) for v in loc_blob["dates"].values()]
+                if not vals: 
+                    continue
+                agg = {"date": day, "shop_id": int(loc_id)}
                 for k in kpis:
-                    series = [v["data"].get(k) for v in vals if v.get("data")]
-                    series = [x for x in series if x is not None]
+                    series = [x.get(k) for x in vals if x and x.get(k) is not None]
                     if not series:
                         agg[k] = None
-                    elif k in ksum:
+                    elif k in {"count_in","turnover"}:
                         agg[k] = float(np.nansum(series))
-                    elif k in kmean:
-                        agg[k] = float(np.nanmean(series))
                     else:
-                        agg[k] = float(np.nansum(series))
+                        agg[k] = float(np.nanmean(series))
                 rows.append(agg)
     if not rows:
         return pd.DataFrame(columns=["date","shop_id",*kpis])
@@ -97,14 +107,8 @@ def normalize_vemcount_daylevel(resp_json, kpis=("count_in","conversion_rate","t
             df.loc[mask, "sales_per_visitor"] = (df.loc[mask, "turnover"] / df.loc[mask, "count_in"].replace(0, np.nan))
     return df
 
-def to_weekday_en(series):
-    return pd.to_datetime(series).dt.day_name()
-
-def quad_plot(df, x="conversion_rate", y="sales_per_visitor", color="weekday", title="Weekday Conversion vs SPV"):
-    xmean = df[x].mean()
-    ymean = df[y].mean()
-    fig = px.scatter(df, x=x, y=y, color=color, hover_data=["weekday","date"], title=title)
-    fig.add_hline(y=ymean, line_dash="dot")
-    fig.add_vline(x=xmean, line_dash="dot")
-    fig.update_layout(margin=dict(t=60,r=20,b=20,l=20))
-    return fig, xmean, ymean
+def friendly_error(js, context=""):
+    if isinstance(js, dict) and js.get("_error"):
+        st.error(f"Geen data ontvangen ({context}). Controleer periode, store IDs of API_URL. [status={js.get('status')}]")
+        return True
+    return False
