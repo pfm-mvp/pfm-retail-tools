@@ -50,7 +50,7 @@ def fmt_pct(x, digits=1):
 
 def api_get_report(params, base_url):
     url = f"{base_url.rstrip('/')}/get-report"
-    resp = requests.get(url, params=params, timeout=40)
+    resp = requests.post(url, params=params, timeout=40)
     if resp.status_code >= 400:
         return {"_error": True, "status": resp.status_code, "text": resp.text}
     return resp.json()
@@ -61,7 +61,7 @@ def api_get_live_inside(shop_ids, base_url, live_url=None):
     param_list = [("source", "shops")]
     for sid in shop_ids:
         param_list.append(("data", int(sid)))
-    resp = requests.get(live_url, params=param_list, timeout=15)
+    resp = requests.post(live_url, params=param_list, timeout=15)
     if resp.status_code >= 400:
         return {"_error": True, "status": resp.status_code, "text": resp.text}
     return resp.json()
