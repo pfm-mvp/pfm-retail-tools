@@ -2,11 +2,32 @@
 import requests
 import pandas as pd
 import numpy as np
+from datetime import datetime, timedelta
+import plotly.express as px
+import streamlit as st
 
+# ---------- Styling ----------
 PFM_PURPLE = "#762181"
 PFM_RED = "#F04438"
 PFM_ORANGE = "#F59E0B"
 
+def inject_css(st):
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700&display=swap');
+        html, body, [class*="css"]  { font-family: 'Instrument Sans', sans-serif; }
+        .pill {display:inline-block;padding:6px 10px;border-radius:999px;background:#f3e8ff;color:#4a148c;margin-right:6px;font-weight:600}
+        .pfm-btn {background: %s!important;color:white!important;border-radius: 12px!important;}
+        .card {border:1px solid #eee;border-radius:16px;padding:16px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
+        .kpi {font-size:28px;font-weight:700}
+        .kpi-sub {color:#666;font-size:12px}
+        </style>
+        """ % PFM_PURPLE,
+        unsafe_allow_html=True
+    )
+
+# ---------- Formatters ----------
 def fmt_eur(x):
     try:
         return f"€{x:,.0f}".replace(",", ".")
@@ -19,14 +40,13 @@ def fmt_pct(x, digits=1):
     except Exception:
         return "0%"
 
-# GET /get-report via FastAPI proxy. Pass params as list of tuples (no [] keys).
+# ---------- API Helpers ----------
 def api_get_report(params, base_url):
     url = f"{base_url.rstrip('/')}/get-report"
     r = requests.get(url, params=params, timeout=30)
     r.raise_for_status()
     return r.json()
 
-# GET /report/live-inside (proxied or direct). source: 'locations' or 'zones'. ids: list[int]
 def api_get_live_inside(source, ids, base_url, live_url=None):
     if live_url is None:
         live_url = f"{base_url.rstrip('/')}/report/live-inside"
@@ -37,7 +57,7 @@ def api_get_live_inside(source, ids, base_url, live_url=None):
     r.raise_for_status()
     return r.json()
 
-# Normalize typical Vemcount day response
+# ---------- Normalizers ----------
 def normalize_vemcount_daylevel(resp_json, kpis=("count_in","conversion_rate","turnover","sales_per_visitor")):
     rows = []
     data = resp_json.get("data", {})
@@ -79,3 +99,12 @@ def normalize_vemcount_daylevel(resp_json, kpis=("count_in","conversion_rate","t
 
 def to_weekday_en(series):
     return pd.to_datetime(series).dt.day_name()
+
+def quad_plot(df, x="conversion_rate", y="sales_per_visitor", color="weekday", title="Weekday Conversion vs SPV"):
+    xmean = df[x].mean()
+    ymean = df[y].mean()
+    fig = px.scatter(df, x=x, y=y, color=color, hover_data=["weekday","date"], title=title)
+    fig.add_hline(y=ymean, line_dash="dot")
+    fig.add_vline(x=xmean, line_dash="dot")
+    fig.update_layout(margin=dict(t=60,r=20,b=20,l=20))
+    return fig, xmean, ymean

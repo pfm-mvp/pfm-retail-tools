@@ -1,9 +1,6 @@
 
-# Vul dit aan met jouw echte mapping. Voorbeeld:
-# Gebruik 'zones' als je zone-IDs zoals "Iedereen" gebruikt; anders 'locations'.
+# Vul je mapping hier aan. Voor zones vs locations kies je in de app zelf.
 shop_mapping = {
     "Putte (Iedereen)": 37953,
     "Den Bosch (Iedereen)": 37952,
-    # "Amsterdam": 12345,
-    # "Utrecht": 23456,
 }
