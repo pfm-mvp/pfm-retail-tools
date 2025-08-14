@@ -3,9 +3,10 @@ import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
-from urllib.parse import urlsplit, urlencode
+import http.client
+import json
+from urllib.parse import urlsplit, urlencode, quote
 from typing import Optional, List, Tuple
-from urllib.parse import quote
 
 PFM_PURPLE = "#762181"
 PFM_RED = "#F04438"
@@ -156,52 +157,91 @@ def build_params_reports_plain(source: str, period: Optional[str], data_ids: Lis
 # ---------------------------
 # HTTP (POST; live logt volledige r.url)
 # ---------------------------
-def api_get_report(params: list[tuple[str, str]], timeout: int = 40):
+def api_get_report(params: list[tuple[str, object]], timeout: int = 40):
     """
     POST naar exact de base uit secrets (die bij jou al /get-report is),
-    met een RAW querystring zodat 'data[]' en 'data_output[]' NIET naar %5B%5D worden ge-encodeerd.
+    met een RAUWE querystring zodat 'data[]' en 'data_output[]' letterlijk in de URL blijven.
+    We gebruiken http.client ipv requests om elke auto-encoding te vermijden.
     """
     api_url_secret = _safe_get_secret("API_URL")
     if not api_url_secret:
         return {"_error": True, "status": 0, "text": "API_URL secret ontbreekt of is leeg", "_url": "<missing:API_URL>", "_method": "POST"}
 
-    base = api_url_secret.rstrip("/")   # verwacht: https://vemcount-agent.onrender.com/get-report
-    qs   = _qs_preserve_brackets(params)
-    url  = f"{base}?{qs}"               # RAW query
+    # parse base (verwacht: https://vemcount-agent.onrender.com/get-report)
+    base = api_url_secret.rstrip("/")
+    parts = urlsplit(base)
+    scheme, netloc, path = parts.scheme, parts.netloc, parts.path
+
+    # rauwe QS: encode alléén values voor veiligheid, maar LAAT KEYS MET [] ONGEWIJZIGD
+    # NB: GEEN urlencode gebruiken; dat encodeert []
+    qs_parts = []
+    for k, v in params:
+        if v is None: 
+            continue
+        # we encoden values minimaal (spaties -> %20). Brackets zitten alleen in KEY.
+        val = str(v).replace(" ", "%20")
+        qs_parts.append(f"{k}={val}")
+    qs = "&".join(qs_parts)
+    full_path = f"{path}?{qs}"
+
+    # doe de POST raw
+    try:
+        conn = http.client.HTTPSConnection(netloc, timeout=timeout) if scheme == "https" else http.client.HTTPConnection(netloc, timeout=timeout)
+        conn.request("POST", full_path, body=None, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        resp = conn.getresponse()
+        status = resp.status
+        data = resp.read()
+        conn.close()
+    except Exception as e:
+        return {"_error": True, "status": 0, "text": f"{type(e).__name__}: {e}", "_url": f"{scheme}://{netloc}{full_path}", "_method": "POST"}
+
+    if status >= 400:
+        return {"_error": True, "status": status, "text": data.decode("utf-8", errors="ignore"), "_url": f"{scheme}://{netloc}{full_path}", "_method": "POST"}
 
     try:
-        resp = requests.post(url, timeout=timeout)  # LET OP: géén params= gebruiken
-        if resp.status_code >= 400:
-            return {"_error": True, "status": resp.status_code, "text": resp.text, "_url": resp.url, "_method": "POST"}
-        return resp.json()
+        return json.loads(data.decode("utf-8"))
     except Exception as e:
-        return {"_error": True, "status": 0, "text": f"{type(e).__name__}: {e}", "_url": url, "_method": "POST"}
+        return {"_error": True, "status": status, "text": f"JSON decode error: {e}", "_url": f"{scheme}://{netloc}{full_path}", "_method": "POST"}
 
 def api_get_live_inside(shop_ids: list[int], source: str = "locations", timeout: int = 15):
     """
     POST naar <HOST>/report/live-inside met ?source=locations&data[]=<id>
-    (brackets blijven zichtbaar; geen %5B%5D).
+    Zónder enige auto-encoding: brackets blijven letterlijk zichtbaar in de URL.
     """
     api_url_secret = _safe_get_secret("API_URL")
     if not api_url_secret:
         return {"_error": True, "status": 0, "text": "API_URL secret ontbreekt of is leeg", "_url": "<missing:API_URL>", "_method": "POST"}
 
-    root = _host_root_from_api_url(api_url_secret)          # haal host uit jouw base
-    live_url = f"{root}/report/live-inside"
+    # host uit je base
+    parts = urlsplit(api_url_secret.rstrip("/"))
+    scheme, netloc = parts.scheme, parts.netloc
+    path = "/report/live-inside"
 
-    params = [("source", source)]
+    # rauwe QS met echte brackets
+    qs_parts = [f"source={source}"]
     for sid in shop_ids:
-        params.append(("data[]", int(sid)))                 # brackets!
+        qs_parts.append(f"data[]={int(sid)}")
+    qs = "&".join(qs_parts)
+    full_path = f"{path}?{qs}"
 
-    url = f"{live_url}?{_qs_preserve_brackets(params)}"     # RAW query
+    # raw POST
+    try:
+        conn = http.client.HTTPSConnection(netloc, timeout=timeout) if scheme == "https" else http.client.HTTPConnection(netloc, timeout=timeout)
+        conn.request("POST", full_path, body=None, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        resp = conn.getresponse()
+        status = resp.status
+        data = resp.read()
+        conn.close()
+    except Exception as e:
+        return {"_error": True, "status": 0, "text": f"{type(e).__name__}: {e}", "_url": f"{scheme}://{netloc}{full_path}", "_method": "POST"}
+
+    if status >= 400:
+        return {"_error": True, "status": status, "text": data.decode("utf-8", errors="ignore"), "_url": f"{scheme}://{netloc}{full_path}", "_method": "POST"}
 
     try:
-        resp = requests.post(url, timeout=timeout)          # geen params=
-        if resp.status_code >= 400:
-            return {"_error": True, "status": resp.status_code, "text": resp.text, "_url": resp.url, "_method": "POST"}
-        return resp.json()
+        return json.loads(data.decode("utf-8"))
     except Exception as e:
-        return {"_error": True, "status": 0, "text": f"{type(e).__name__}: {e}", "_url": url, "_method": "POST"}
+        return {"_error": True, "status": status, "text": f"JSON decode error: {e}", "_url": f"{scheme}://{netloc}{full_path}", "_method": "POST"}
 
 # ---------------------------
 # Normalizers & error UI
