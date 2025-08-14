@@ -30,6 +30,20 @@ def inject_css():
     css += "</style>"
     st.markdown(css, unsafe_allow_html=True)
 
+def _qs_preserve_brackets(pairs: list[tuple[str, object]]) -> str:
+    """
+    Bouwt een querystring waarbij [] in de KEY behouden blijven.
+    We encoden alleen de VALUE (':' laten we toe voor tijden zoals 09:00).
+    Voorbeeld: [("data[]", 32224), ("data_output[]", "turnover")]
+    -> "data[]=32224&data_output[]=turnover"
+    """
+    parts = []
+    for k, v in pairs:
+        if v is None:
+            continue
+        parts.append(f"{k}={quote(str(v), safe=':')}")
+    return "&".join(parts)
+
 # ---------------------------
 # Secrets & endpoints
 # ---------------------------
