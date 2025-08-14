@@ -160,89 +160,53 @@ def build_params_reports_plain(source: str, period: Optional[str], data_ids: Lis
 def api_get_report(params: list[tuple[str, object]], timeout: int = 40):
     """
     POST naar exact de base uit secrets (die bij jou al /get-report is),
-    met een RAUWE querystring zodat 'data[]' en 'data_output[]' letterlijk in de URL blijven.
-    We gebruiken http.client ipv requests om elke auto-encoding te vermijden.
+    met herhaalde keys ZONDER brackets: data=... & data_output=...
     """
     api_url_secret = _safe_get_secret("API_URL")
     if not api_url_secret:
         return {"_error": True, "status": 0, "text": "API_URL secret ontbreekt of is leeg", "_url": "<missing:API_URL>", "_method": "POST"}
 
-    # parse base (verwacht: https://vemcount-agent.onrender.com/get-report)
-    base = api_url_secret.rstrip("/")
-    parts = urlsplit(base)
-    scheme, netloc, path = parts.scheme, parts.netloc, parts.path
-
-    # rauwe QS: encode alléén values voor veiligheid, maar LAAT KEYS MET [] ONGEWIJZIGD
-    # NB: GEEN urlencode gebruiken; dat encodeert []
-    qs_parts = []
-    for k, v in params:
-        if v is None: 
-            continue
-        # we encoden values minimaal (spaties -> %20). Brackets zitten alleen in KEY.
-        val = str(v).replace(" ", "%20")
-        qs_parts.append(f"{k}={val}")
-    qs = "&".join(qs_parts)
-    full_path = f"{path}?{qs}"
-
-    # doe de POST raw
-    try:
-        conn = http.client.HTTPSConnection(netloc, timeout=timeout) if scheme == "https" else http.client.HTTPConnection(netloc, timeout=timeout)
-        conn.request("POST", full_path, body=None, headers={"Content-Type": "application/x-www-form-urlencoded"})
-        resp = conn.getresponse()
-        status = resp.status
-        data = resp.read()
-        conn.close()
-    except Exception as e:
-        return {"_error": True, "status": 0, "text": f"{type(e).__name__}: {e}", "_url": f"{scheme}://{netloc}{full_path}", "_method": "POST"}
-
-    if status >= 400:
-        return {"_error": True, "status": status, "text": data.decode("utf-8", errors="ignore"), "_url": f"{scheme}://{netloc}{full_path}", "_method": "POST"}
+    base = api_url_secret.rstrip("/")   # verwacht: https://vemcount-agent.onrender.com/get-report
+    # herhaalde keys korrekt maken
+    qs   = urlencode(params, doseq=True).replace("%3A", ":")
+    url  = f"{base}?{qs}"
 
     try:
-        return json.loads(data.decode("utf-8"))
+        resp = requests.post(url, timeout=timeout)  # LET OP: géén params= gebruiken
+        if resp.status_code >= 400:
+            return {"_error": True, "status": resp.status_code, "text": resp.text, "_url": resp.url, "_method": "POST"}
+        return resp.json()
     except Exception as e:
-        return {"_error": True, "status": status, "text": f"JSON decode error: {e}", "_url": f"{scheme}://{netloc}{full_path}", "_method": "POST"}
+        return {"_error": True, "status": 0, "text": f"{type(e).__name__}: {e}", "_url": url, "_method": "POST"}
+
 
 def api_get_live_inside(shop_ids: list[int], source: str = "locations", timeout: int = 15):
     """
-    POST naar <HOST>/report/live-inside met ?source=locations&data[]=<id>
-    Zónder enige auto-encoding: brackets blijven letterlijk zichtbaar in de URL.
+    POST naar <HOST>/report/live-inside met ?source=locations&data=<id>
+    (dus géén brackets).
     """
     api_url_secret = _safe_get_secret("API_URL")
     if not api_url_secret:
         return {"_error": True, "status": 0, "text": "API_URL secret ontbreekt of is leeg", "_url": "<missing:API_URL>", "_method": "POST"}
 
-    # host uit je base
     parts = urlsplit(api_url_secret.rstrip("/"))
-    scheme, netloc = parts.scheme, parts.netloc
-    path = "/report/live-inside"
+    root  = f"{parts.scheme}://{parts.netloc}"
+    live_url = f"{root}/report/live-inside"
 
-    # rauwe QS met echte brackets
-    qs_parts = [f"source={source}"]
+    params = [("source", source)]
     for sid in shop_ids:
-        qs_parts.append(f"data[]={int(sid)}")
-    qs = "&".join(qs_parts)
-    full_path = f"{path}?{qs}"
+        params.append(("data", int(sid)))     # zonder []
 
-    # raw POST
-    try:
-        conn = http.client.HTTPSConnection(netloc, timeout=timeout) if scheme == "https" else http.client.HTTPConnection(netloc, timeout=timeout)
-        conn.request("POST", full_path, body=None, headers={"Content-Type": "application/x-www-form-urlencoded"})
-        resp = conn.getresponse()
-        status = resp.status
-        data = resp.read()
-        conn.close()
-    except Exception as e:
-        return {"_error": True, "status": 0, "text": f"{type(e).__name__}: {e}", "_url": f"{scheme}://{netloc}{full_path}", "_method": "POST"}
-
-    if status >= 400:
-        return {"_error": True, "status": status, "text": data.decode("utf-8", errors="ignore"), "_url": f"{scheme}://{netloc}{full_path}", "_method": "POST"}
+    qs  = urlencode(params, doseq=True)
+    url = f"{live_url}?{qs}"
 
     try:
-        return json.loads(data.decode("utf-8"))
+        resp = requests.post(url, timeout=timeout)  # géén params=
+        if resp.status_code >= 400:
+            return {"_error": True, "status": resp.status_code, "text": resp.text, "_url": resp.url, "_method": "POST"}
+        return resp.json()
     except Exception as e:
-        return {"_error": True, "status": status, "text": f"JSON decode error: {e}", "_url": f"{scheme}://{netloc}{full_path}", "_method": "POST"}
-
+        return {"_error": True, "status": 0, "text": f"{type(e).__name__}: {e}", "_url":
 # ---------------------------
 # Normalizers & error UI
 # ---------------------------
