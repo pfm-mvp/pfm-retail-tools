@@ -1,16 +1,18 @@
 import streamlit as st
 import pandas as pd
 from shop_mapping import SHOP_NAME_MAP
-from utils_pfmx import (
-    inject_css,
-    api_get_live_inside,
-    api_get_report,
-    normalize_vemcount_daylevel,
-    fmt_eur,
-    fmt_pct,
-    friendly_error,
-    build_params_reports_brackets,
-)
+from utils_pfmx import build_params_reports_plain  # i.p.v. brackets
+
+outputs = ["count_in","conversion_rate","turnover","sales_per_visitor"]
+
+params_y  = build_params_reports_plain("shops", "yesterday",  [shop_id], outputs)
+js_y      = api_get_report(params_y)
+
+params_tw = build_params_reports_plain("shops", "this_week",  [shop_id], outputs)
+js_tw     = api_get_report(params_tw)
+
+params_lw = build_params_reports_plain("shops", "last_week",  [shop_id], outputs)
+js_lw     = api_get_report(params_lw)
 
 st.set_page_config(page_title="Store Live Ops", page_icon="🟢", layout="wide")
 inject_css()
