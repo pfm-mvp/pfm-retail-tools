@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from shop_mapping import SHOP_NAME_MAP
-from utils_pfmx import inject_css, api_get_report, normalize_vemcount_daylevel, fmt_eur, fmt_pct, friendly_error
+from utils_pfmx import inject_css, api_get_report, normalize_vemcount_daylevel, friendly_error
 
 st.set_page_config(page_title="Executive ROI Scenarios", page_icon="💼", layout="wide")
 inject_css()
@@ -10,7 +10,7 @@ inject_css()
 ids = list(SHOP_NAME_MAP.keys())
 period = st.selectbox("Periode", ["last_month","this_quarter","last_quarter","this_year","last_year"], index=0)
 
-st.markdown("### 🎯 Targets (demo)")
+# Demo inputs
 c1,c2,c3,c4 = st.columns(4)
 with c1: conv_add = st.slider("Conversie uplift (+pp)", 0.0, 0.20, 0.05, 0.01)
 with c2: spv_uplift = st.slider("SPV‑uplift (%)", 0, 50, 10, 1) / 100.0
@@ -24,9 +24,9 @@ for sid in ids: params.append(("data", sid))
 for k in ["count_in","conversion_rate","turnover","sales_per_visitor"]:
     params.append(("data_output", k))
 
-js = api_get_report(params, st.secrets["API_URL"])
+js = api_get_report(params)
 if friendly_error(js, period):
     st.stop()
 
 df = normalize_vemcount_daylevel(js)
-st.write(df.head())
+st.dataframe(df.head(50))
