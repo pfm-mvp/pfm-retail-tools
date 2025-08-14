@@ -49,7 +49,7 @@ def fmt_pct(x, digits=1):
         return "0%"
 
 def api_get_report(params, base_url):
-    url = f"{base_url.rstrip('/')}/get-report"
+    url = f"{base_url.rstrip('/')}"
     resp = requests.post(url, params=params, timeout=40)
     if resp.status_code >= 400:
         return {"_error": True, "status": resp.status_code, "text": resp.text}
