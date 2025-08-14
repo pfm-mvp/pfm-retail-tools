@@ -158,62 +158,50 @@ def build_params_reports_plain(source: str, period: Optional[str], data_ids: Lis
 # ---------------------------
 def api_get_report(params: list[tuple[str, str]], timeout: int = 40):
     """
-    POST naar exact de base uit secrets (die bij jou al /get-report is)
-    met een RAW querystring waarin 'data[]' en 'data_output[]' NIET worden ge-URL-encoded.
+    POST naar exact de base uit secrets (die bij jou al /get-report is),
+    met een RAW querystring zodat 'data[]' en 'data_output[]' NIET naar %5B%5D worden ge-encodeerd.
     """
     api_url_secret = _safe_get_secret("API_URL")
     if not api_url_secret:
         return {"_error": True, "status": 0, "text": "API_URL secret ontbreekt of is leeg", "_url": "<missing:API_URL>", "_method": "POST"}
 
-    # Verwacht: secrets = "https://vemcount-agent.onrender.com/get-report"
-    base = api_url_secret.rstrip("/")
-    qs = _qs_preserve_brackets(params)  # <-- behoudt [] in keys
-    url = f"{base}?{qs}"
+    base = api_url_secret.rstrip("/")   # verwacht: https://vemcount-agent.onrender.com/get-report
+    qs   = _qs_preserve_brackets(params)
+    url  = f"{base}?{qs}"               # RAW query
 
     try:
-        resp = requests.post(url, timeout=timeout)  # geen params= meer!
+        resp = requests.post(url, timeout=timeout)  # LET OP: géén params= gebruiken
         if resp.status_code >= 400:
             return {"_error": True, "status": resp.status_code, "text": resp.text, "_url": resp.url, "_method": "POST"}
         return resp.json()
     except Exception as e:
         return {"_error": True, "status": 0, "text": f"{type(e).__name__}: {e}", "_url": url, "_method": "POST"}
 
-def api_get_live_inside(shop_ids: List[int], source: str = "locations", timeout: int = 15):
+def api_get_live_inside(shop_ids: list[int], source: str = "locations", timeout: int = 15):
     """
-    Live inside met expliciete query: ?source=locations&data[]=<id>
-    Probeert POST, dan GET, over meerdere URL-kandidaten.
-    Logt de volledige r.url zodat je altijd de querystring ziet.
+    POST naar <HOST>/report/live-inside met ?source=locations&data[]=<id>
+    (brackets blijven zichtbaar; geen %5B%5D).
     """
     api_url_secret = _safe_get_secret("API_URL")
     if not api_url_secret:
         return {"_error": True, "status": 0, "text": "API_URL secret ontbreekt of is leeg", "_url": "<missing:API_URL>", "_method": "POST"}
-    live_override = _safe_get_secret("LIVE_URL")
 
-    # echte brackets voor live
+    root = _host_root_from_api_url(api_url_secret)          # haal host uit jouw base
+    live_url = f"{root}/report/live-inside"
+
     params = [("source", source)]
     for sid in shop_ids:
-        params.append(("data[]", int(sid)))
+        params.append(("data[]", int(sid)))                 # brackets!
 
-    tried = []
-    for base in _derive_live_candidates(api_url_secret, live_override):
-        # POST
-        try:
-            r = requests.post(base, params=params, timeout=timeout)
-            tried.append(f"POST {r.url} -> {r.status_code}")
-            if 200 <= r.status_code < 300:
-                return r.json()
-        except Exception as e:
-            tried.append(f"POST {base} -> EXC {type(e).__name__}: {e}")
-        # GET
-        try:
-            r = requests.get(base, params=params, timeout=timeout)
-            tried.append(f"GET  {r.url} -> {r.status_code}")
-            if 200 <= r.status_code < 300:
-                return r.json()
-        except Exception as e:
-            tried.append(f"GET  {base} -> EXC {type(e).__name__}: {e}")
+    url = f"{live_url}?{_qs_preserve_brackets(params)}"     # RAW query
 
-    return {"_error": True, "status": 404, "text": "Geen geldig live-endpoint gevonden.", "_url": " | ".join(tried), "_method": "POST→GET"}
+    try:
+        resp = requests.post(url, timeout=timeout)          # geen params=
+        if resp.status_code >= 400:
+            return {"_error": True, "status": resp.status_code, "text": resp.text, "_url": resp.url, "_method": "POST"}
+        return resp.json()
+    except Exception as e:
+        return {"_error": True, "status": 0, "text": f"{type(e).__name__}: {e}", "_url": url, "_method": "POST"}
 
 # ---------------------------
 # Normalizers & error UI
