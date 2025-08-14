@@ -9,13 +9,13 @@ from utils_pfmx import (
     fmt_eur,
     fmt_pct,
     friendly_error,
-    build_params_reports_brackets,   # ← nieuw
+    build_params_reports_brackets,
 )
 
 st.set_page_config(page_title="Store Live Ops", page_icon="🟢", layout="wide")
 inject_css()
 
-# --- Selectie
+# Selectie
 name_by_id = SHOP_NAME_MAP
 id_by_name = {v: k for k, v in name_by_id.items()}
 shop_name = st.selectbox("Kies winkel", list(id_by_name.keys()))
@@ -28,59 +28,45 @@ with colT1:
 with colT2:
     visitors_target = st.number_input("Bezoekerstarget (deze week)", min_value=0, value=1200, step=50)
 
-# --- LIVE INSIDE (robuust: POST→GET & meerdere URL-kandidaten)
+# Live inside (fout stopt NIET de pagina)
 st.markdown("#### Live inside")
 live_js = api_get_live_inside([shop_id], source="locations")
-if friendly_error(live_js, "live-inside"):
-    st.stop()
-
-live_data = live_js.get("data") or {}
+live_error = friendly_error(live_js, "live-inside")
 inside = 0
-if isinstance(live_data, dict):
-    blob = live_data.get(str(shop_id)) or live_data.get(shop_id)
-    if isinstance(blob, dict):
-        inside = blob.get("inside") or blob.get("count_inside") or blob.get("current") or 0
+if not live_error and isinstance(live_js, dict):
+    live_data = live_js.get("data") or {}
+    if isinstance(live_data, dict):
+        blob = live_data.get(str(shop_id)) or live_data.get(shop_id)
+        if isinstance(blob, dict):
+            inside = blob.get("inside") or blob.get("count_inside") or blob.get("current") or 0
 
 c1, c2 = st.columns(2)
 c1.metric("👥 Nu binnen", int(inside))
 c2.markdown("&nbsp;", unsafe_allow_html=True)
 
-# --- DAG & WEEK KPI's (met brackets data[] en data_output[])
+# Dag & Week KPI's (met brackets)
 st.markdown("#### Dag & Week KPI's")
+outputs = ["count_in", "conversion_rate", "turnover", "sales_per_visitor"]
 
 # Yesterday
-params_y = build_params_reports_brackets(
-    source="shops",
-    period="yesterday",
-    data_ids=[shop_id],
-    outputs=["count_in", "conversion_rate", "turnover", "sales_per_visitor"],
-)
+params_y = build_params_reports_brackets("shops", "yesterday", [shop_id], outputs)
 js_y = api_get_report(params_y)
-if friendly_error(js_y, "yesterday"):
-    st.stop()
+y_error = friendly_error(js_y, "yesterday")
 
 # This week
-params_tw = build_params_reports_brackets(
-    source="shops", period="this_week", data_ids=[shop_id],
-    outputs=["count_in", "conversion_rate", "turnover", "sales_per_visitor"]
-)
+params_tw = build_params_reports_brackets("shops", "this_week", [shop_id], outputs)
 js_tw = api_get_report(params_tw)
-if friendly_error(js_tw, "this_week"):
-    st.stop()
+tw_error = friendly_error(js_tw, "this_week")
 
 # Last week
-params_lw = build_params_reports_brackets(
-    source="shops", period="last_week", data_ids=[shop_id],
-    outputs=["count_in", "conversion_rate", "turnover", "sales_per_visitor"]
-)
+params_lw = build_params_reports_brackets("shops", "last_week", [shop_id], outputs)
 js_lw = api_get_report(params_lw)
-if friendly_error(js_lw, "last_week"):
-    st.stop()
+lw_error = friendly_error(js_lw, "last_week")
 
-# --- KPIs renderen
-df_y  = normalize_vemcount_daylevel(js_y)
-df_tw = normalize_vemcount_daylevel(js_tw)
-df_lw = normalize_vemcount_daylevel(js_lw)
+# Dataframes (safe fallbacks)
+df_y  = normalize_vemcount_daylevel(js_y)  if not y_error  else pd.DataFrame(columns=["conversion_rate"])
+df_tw = normalize_vemcount_daylevel(js_tw) if not tw_error else pd.DataFrame(columns=["count_in"])
+df_lw = normalize_vemcount_daylevel(js_lw) if not lw_error else pd.DataFrame(columns=["count_in"])
 
 conv_y = float(df_y["conversion_rate"].mean()) if not df_y.empty else 0.0
 vis_tw = int(df_tw["count_in"].sum()) if not df_tw.empty else 0
