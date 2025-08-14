@@ -1,6 +1,13 @@
 
 # Vul je mapping hier aan. Voor zones vs locations kies je in de app zelf.
-shop_mapping = {
-    "Putte (Iedereen)": 37953,
-    "Den Bosch (Iedereen)": 37952,
+SHOP_NAME_MAP = {
+    32224: "Amersfoort",
+    31977: "Amsterdam",
+    31831: "Den Bosch",
+    32872: "Haarlem",
+    32319: "Leiden",
+    32871: "Maastricht",
+    30058: "Nijmegen",
+    32320: "Rotterdam",
+    32204: "Venlo"
 }
