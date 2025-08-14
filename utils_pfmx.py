@@ -17,8 +17,8 @@ def inject_css():
     css = "<style>\n"
     css += '[data-testid="stSidebar"] ' + "{\n" + f"  background-color: {PFM_RED};\n" + "}\n"
     css += '[data-testid="stSidebar"] *, [data-testid="stSidebar"] a ' + "{\n" + "  color: #FFFFFF !important;\n" + "}\n"
-    css += ".stButton button, .stDownloadButton button " + "{\n" + f"  background-color: {PFM_PURPLE} !important;\n  color: #FFFFFF !important;\n  border-radius: 12px !important;\n  border: none !important;\n" + "}\n"
-    css += ".pfm-card " + "{\n" + "  border:1px solid #e6e6e6;border-radius:16px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.05);\n  background:#FFFFFF;\n" + "}\n"
+    css += ".stButton button, .stDownloadButton button " + "{\n" + "  background:#762181 !important;\n  color:#fff !important;\n  border-radius: 12px !important;\n  border: none !important;\n" + "}\n"
+    css += ".pfm-card " + "{\n" + "  border:1px solid #e6e6e6;box-shadow:0 1px 3px rgba(0,0,0,.05);\n  background:#FFFFFF;\n  padding:16px;border-radius:16px;\n" + "}\n"
     css += ".kpi-good " + "{\n" + f"  color: {succ}; font-weight:700;\n" + "}\n"
     css += ".kpi-bad " + "{\n" + f"  color: {dang}; font-weight:700;\n" + "}\n"
     css += "</style>"
@@ -31,13 +31,13 @@ def _resolve_urls(api_url: str, live_url: str|None):
         get_report_url = api_url
     else:
         get_report_url = api_url + "/get-report"
-    # live-side from root unless LIVE_URL supplied
+    # live-inside vanaf dezelfde root tenzij LIVE_URL is opgegeven
     if live_url:
         live_inside_url = live_url.rstrip("/")
     else:
         parts = urlsplit(api_url)
         root = f"{parts.scheme}://{parts.netloc}"
-        live_inside_url = root + "/live-side"
+        live_inside_url = root + "/report/live-inside"
     return get_report_url, live_inside_url
 
 def fmt_eur(x):
@@ -52,29 +52,24 @@ def fmt_pct(x, digits=1):
     except Exception:
         return "0%"
 
-def _bracketize_params(params):
-    """Ensure data and data_output keys are encoded as data[] and data_output[] for /get-report."""
-    fixed = []
+def _no_brackets_identity(params):
+    """Identity passthrough: we now send repeated keys without brackets (data=..., data_output=...)."""
+    fixed = []  # legacy name, kept for compatibility
     for k, v in params:
-        if k == "data":
-            fixed.append(("data[]", v))
-        elif k == "data_output":
-            fixed.append(("data_output[]", v))
-        else:
-            fixed.append((k, v))
-    return fixed
+        fixed.append((k, v))
+    return fixed  # unchanged structure
 
 def api_get_report(params, base_url):
-    """Call FastAPI /get-report with source=shops and bracketed arrays for data[] and data_output[]."""
+    """Call FastAPI /get-report with repeated keys (no brackets)."""
     get_url, _ = _resolve_urls(st.secrets["API_URL"], st.secrets.get("LIVE_URL"))
-    safe_params = _bracketize_params(params)
+    safe_params = _no_brackets_identity(params)
     resp = requests.get(get_url, params=safe_params, timeout=40)
     if resp.status_code >= 400:
         return {"_error": True, "status": resp.status_code, "text": resp.text, "_url": resp.url}
     return resp.json()
 
 def api_get_live_inside(shop_ids, base_url, live_url=None):
-    """Live counter at /live-side with source=locations and data=shop_id (no brackets)."""
+    """Live counter at /report/live-inside with source=locations and data=shop_id (no brackets)."""
     _, live_inside_url = _resolve_urls(st.secrets["API_URL"], st.secrets.get("LIVE_URL"))
     param_list = [("source", "locations")]
     for sid in shop_ids:
