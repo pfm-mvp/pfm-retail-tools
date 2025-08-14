@@ -3,9 +3,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
-import http.client
-import json
-from urllib.parse import urlsplit, urlencode, quote
+from urllib.parse import urlsplit, urlencode
 from typing import Optional, List, Tuple
 
 PFM_PURPLE = "#762181"
@@ -31,36 +29,9 @@ def inject_css():
     css += "</style>"
     st.markdown(css, unsafe_allow_html=True)
 
-def _qs_preserve_brackets(pairs: list[tuple[str, object]]) -> str:
-    """
-    Bouwt een querystring waarbij [] in de KEY behouden blijven.
-    We encoden alleen de VALUE (':' laten we toe voor tijden zoals 09:00).
-    Voorbeeld: [("data[]", 32224), ("data_output[]", "turnover")]
-    -> "data[]=32224&data_output[]=turnover"
-    """
-    parts = []
-    for k, v in pairs:
-        if v is None:
-            continue
-        parts.append(f"{k}={quote(str(v), safe=':')}")
-    return "&".join(parts)
-
 # ---------------------------
 # Secrets & endpoints
 # ---------------------------
-def _qs_preserve_brackets(pairs: list[tuple[str, object]]) -> str:
-    """
-    Maakt een querystring waarbij we de KEY ongewijzigd laten (dus 'data[]')
-    en alleen de VALUE URL-encoden. Daardoor blijven [] zichtbaar i.p.v. %5B%5D.
-    """
-    parts = []
-    for k, v in pairs:
-        if v is None:
-            continue
-        # laat brackets in KEY staan; encode alleen VALUE (':' laten we toe voor tijden)
-        parts.append(f"{k}={quote(str(v), safe=':')}")
-    return "&".join(parts)
-
 def _safe_get_secret(name: str) -> Optional[str]:
     try:
         val = st.secrets.get(name)
@@ -78,43 +49,21 @@ def _host_root_from_api_url(api_url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 def _derive_report_url(api_url_secret: str) -> str:
+    """Exact /get-report indien zo opgegeven; anders <host>/get-report."""
     api_url = api_url_secret.strip()
     if api_url.rstrip("/").endswith("/get-report"):
         return api_url.rstrip("/")
     return f"{_host_root_from_api_url(api_url)}/get-report"
 
-def _derive_live_candidates(api_url_secret: str, live_override: Optional[str]) -> List[str]:
-    """
-    Live-inside endpoint-kandidaten (in volgorde):
-      1) {API_URL}/live-inside            ← zelfde base als get-report
-      2) {HOST}/live-inside
-      3) {HOST}/report/live-inside
-      4) {API_URL}/report/live-inside
-    LIVE_URL override (abs/rel) gaat vóór deze kandidaten.
-    """
-    api_url = api_url_secret.strip()
-    root = _host_root_from_api_url(api_url)
-    cands: List[str] = []
-
+# (optioneel; niet per se gebruikt, maar handig om achter de hand te hebben)
+def _derive_live_url(api_url_secret: str, live_override: Optional[str] = None) -> str:
+    root = _host_root_from_api_url(api_url_secret)
     if live_override:
         lo = live_override.strip()
         if lo.startswith(("http://", "https://")):
-            cands.append(lo.rstrip("/"))
-        else:
-            cands.append(f"{root}/{lo.lstrip('/').rstrip('/')}")
-
-    cands.extend([
-        f"{api_url.rstrip('/')}/live-inside",
-        f"{root}/live-inside",
-        f"{root}/report/live-inside",
-        f"{api_url.rstrip('/')}/report/live-inside",
-    ])
-
-    seen = set(); uniq = []
-    for u in cands:
-        if u not in seen:
-            uniq.append(u); seen.add(u)
-    return uniq
+            return lo.rstrip("/")
+        return f"{root}/{lo.lstrip('/').rstrip('/')}"
+    return f"{root}/report/live-inside"
 
 # ---------------------------
 # Formatting helpers
@@ -132,19 +81,8 @@ def fmt_pct(x, digits=1):
         return "0%"
 
 # --- params builders (reports) ---
-def build_params_reports_brackets(source: str, period: Optional[str], data_ids: List[int], outputs: List[str]) -> List[Tuple[str,str]]:
-    """data[]=..., data_output[]=..."""
-    p: List[Tuple[str,str]] = [("source", source)]
-    if period:
-        p.append(("period", period))
-    for d in data_ids:
-        p.append(("data[]", str(int(d))))
-    for o in outputs:
-        p.append(("data_output[]", str(o)))
-    return p
-
 def build_params_reports_plain(source: str, period: Optional[str], data_ids: List[int], outputs: List[str]) -> List[Tuple[str,str]]:
-    """data=..., data_output=..."""
+    """data=..., data_output=... (herhaald, zónder brackets)"""
     p: List[Tuple[str,str]] = [("source", source)]
     if period:
         p.append(("period", period))
@@ -154,10 +92,25 @@ def build_params_reports_plain(source: str, period: Optional[str], data_ids: Lis
         p.append(("data_output", str(o)))
     return p
 
+def build_params_reports_brackets(source: str, period: Optional[str], data_ids: List[int], outputs: List[str]) -> List[Tuple[str,str]]:
+    """Alleen houden als je elders brackets nodig hebt; proxy verwacht plain keys."""
+    p: List[Tuple[str,str]] = [("source", source)]
+    if period:
+        p.append(("period", period))
+    for d in data_ids:
+        p.append(("data[]", str(int(d))))
+    for o in outputs:
+        p.append(("data_output[]", str(o)))
+    return p
+
 # ---------------------------
-# HTTP (POST; live logt volledige r.url)
+# HTTP (POST; raw URL zonder params=)
 # ---------------------------
-def api_get_report(params: list[tuple[str, str]], timeout: int = 40):
+def api_get_report(params: List[Tuple[str, object]], timeout: int = 40):
+    """
+    POST naar exact de base uit secrets (meestal /get-report),
+    met herhaalde keys ZONDER brackets (data=..., data_output=...).
+    """
     api_url_secret = _safe_get_secret("API_URL")
     if not api_url_secret:
         return {
@@ -168,12 +121,12 @@ def api_get_report(params: list[tuple[str, str]], timeout: int = 40):
             "_method": "POST"
         }
 
-    base = api_url_secret.rstrip("/")  # verwacht .../get-report
-    qs = urlencode(params, doseq=True)  # maakt data=...&data=...&data_output=...
-    url = f"{base}?{qs}"
+    base = api_url_secret.rstrip("/")  # verwacht: https://vemcount-agent.onrender.com/get-report
+    qs   = urlencode(params, doseq=True).replace("%3A", ":")  # corrigeer 09%3A00 -> 09:00
+    url  = f"{base}?{qs}"
 
     try:
-        resp = requests.post(url, timeout=timeout)  # geen params= gebruiken
+        resp = requests.post(url, timeout=timeout)  # géén params=
         if resp.status_code >= 400:
             return {
                 "_error": True,
@@ -192,14 +145,20 @@ def api_get_report(params: list[tuple[str, str]], timeout: int = 40):
             "_method": "POST"
         }
 
-def api_get_live_inside(shop_ids: list[int], source: str = "locations", timeout: int = 15):
+def api_get_live_inside(shop_ids: List[int], source: str = "locations", timeout: int = 15):
     """
     POST naar <HOST>/report/live-inside met ?source=locations&data=<id>
-    (dus géén brackets).
+    (zònder brackets).
     """
     api_url_secret = _safe_get_secret("API_URL")
     if not api_url_secret:
-        return {"_error": True, "status": 0, "text": "API_URL secret ontbreekt of is leeg", "_url": "<missing:API_URL>", "_method": "POST"}
+        return {
+            "_error": True,
+            "status": 0,
+            "text": "API_URL secret ontbreekt of is leeg",
+            "_url": "<missing:API_URL>",
+            "_method": "POST"
+        }
 
     parts = urlsplit(api_url_secret.rstrip("/"))
     root  = f"{parts.scheme}://{parts.netloc}"
@@ -207,7 +166,7 @@ def api_get_live_inside(shop_ids: list[int], source: str = "locations", timeout:
 
     params = [("source", source)]
     for sid in shop_ids:
-        params.append(("data", int(sid)))     # zonder []
+        params.append(("data", int(sid)))  # zonder []
 
     qs  = urlencode(params, doseq=True)
     url = f"{live_url}?{qs}"
@@ -215,10 +174,23 @@ def api_get_live_inside(shop_ids: list[int], source: str = "locations", timeout:
     try:
         resp = requests.post(url, timeout=timeout)  # géén params=
         if resp.status_code >= 400:
-            return {"_error": True, "status": resp.status_code, "text": resp.text, "_url": resp.url, "_method": "POST"}
+            return {
+                "_error": True,
+                "status": resp.status_code,
+                "text": resp.text,
+                "_url": resp.url,
+                "_method": "POST"
+            }
         return resp.json()
     except Exception as e:
-        return {"_error": True, "status": 0, "text": f"{type(e).__name__}: {e}", "_url":
+        return {
+            "_error": True,
+            "status": 0,
+            "text": f"{type(e).__name__}: {e}",
+            "_url": url,
+            "_method": "POST"
+        }
+
 # ---------------------------
 # Normalizers & error UI
 # ---------------------------
