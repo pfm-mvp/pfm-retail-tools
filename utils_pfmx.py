@@ -58,7 +58,7 @@ def api_get_report(params, base_url):
 def api_get_live_inside(shop_ids, base_url, live_url=None):
     if live_url is None:
         live_url = f"{base_url.rstrip('/')}/report/live-inside"
-    param_list = [("source", "locations")]
+    param_list = [("source", "shops")]
     for sid in shop_ids:
         param_list.append(("data", int(sid)))
     resp = requests.get(live_url, params=param_list, timeout=15)
