@@ -18,10 +18,10 @@ with c3: gross_margin = st.slider("Brutomarge (%)", 20, 80, 55, 1) / 100.0
 with c4: capex = st.number_input("CAPEX per store (€)", min_value=0, value=1500, step=100)
 payback_target = st.slider("Payback‑target (mnd)", 6, 24, 12, 1)
 
-params = [("source","locations"), ("period", period)]
-for sid in ids: params.append(("data", sid))
+params = [("source","shops"), ("period", period)]
+for sid in ids: params.append(("data[]", sid))
 for k in ["count_in","conversion_rate","turnover","sales_per_visitor"]:
-    params.append(("data_output", k))
+    params.append(("data_output[]", k))
 
 js = api_get_report(params, st.secrets["API_URL"])
 if not friendly_error(js, period):

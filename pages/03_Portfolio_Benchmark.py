@@ -9,10 +9,10 @@ inject_css()
 ids = list(SHOP_NAME_MAP.keys())
 period = st.selectbox("Periode", ["last_month","this_quarter","last_quarter","this_year","last_year"], index=0)
 
-params = [("source","locations"), ("period", period)]
-for sid in ids: params.append(("data", sid))
+params = [("source","shops"), ("period", period)]
+for sid in ids: params.append(("data[]", sid))
 for k in ["count_in","conversion_rate","turnover","sales_per_visitor"]:
-    params.append(("data_output", k))
+    params.append(("data_output[]", k))
 
 js = api_get_report(params, st.secrets["API_URL"])
 if not friendly_error(js, period):

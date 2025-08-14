@@ -15,10 +15,10 @@ with t2: spv_target = st.number_input("SPV‑target (€)", min_value=0, value=4
 
 period = st.selectbox("Periode", ["this_month","last_month","this_quarter","last_quarter"], index=0)
 
-params = [("source","locations"), ("period", period)]
-for sid in ids: params.append(("data", sid))
+params = [("source","shops"), ("period", period)]
+for sid in ids: params.append(("data[]", sid))
 for k in ["count_in","conversion_rate","turnover","sales_per_visitor"]:
-    params.append(("data_output", k))
+    params.append(("data_output[]", k))
 
 js = api_get_report(params, st.secrets["API_URL"])
 if not friendly_error(js, period):

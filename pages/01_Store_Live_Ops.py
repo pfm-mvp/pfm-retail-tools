@@ -20,7 +20,7 @@ with colT2:
 
 st.markdown("#### Live bezetting (nu)")
 live_js = api_get_live_inside([shop_id], st.secrets["API_URL"], st.secrets.get("LIVE_URL"))
-if not friendly_error(live_js, "live-inside"):
+if not friendly_error(live_js, "live-side"):
     live_data = live_js.get("data") or {}
     inside = 0
     if isinstance(live_data, dict):
@@ -32,15 +32,15 @@ if not friendly_error(live_js, "live-inside"):
     c2.markdown("&nbsp;", unsafe_allow_html=True)
 
 st.markdown("#### Dag & Week KPI's")
-params_y = [("source","locations"), ("period","yesterday"), ("data", shop_id)]
+params_y = [("source","shops"), ("period","yesterday"), ("data[]", shop_id)]
 for k in ["count_in","conversion_rate","turnover","sales_per_visitor"]:
-    params_y.append(("data_output", k))
+    params_y.append(("data_output[]", k))
 js_y = api_get_report(params_y, st.secrets["API_URL"])
 
-params_tw = [("source","locations"), ("period","this_week"), ("data", shop_id)]
-params_lw = [("source","locations"), ("period","last_week"), ("data", shop_id)]
+params_tw = [("source","shops"), ("period","this_week"), ("data[]", shop_id)]
+params_lw = [("source","shops"), ("period","last_week"), ("data[]", shop_id)]
 for k in ["count_in","conversion_rate","turnover","sales_per_visitor"]:
-    params_tw.append(("data_output", k)); params_lw.append(("data_output", k))
+    params_tw.append(("data_output[]", k)); params_lw.append(("data_output[]", k))
 
 js_tw = api_get_report(params_tw, st.secrets["API_URL"])
 js_lw = api_get_report(params_lw, st.secrets["API_URL"])
