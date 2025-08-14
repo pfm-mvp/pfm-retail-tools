@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 from urllib.parse import urlsplit, urlencode
 from typing import Optional, List, Tuple
+from urllib.parse import quote
 
 PFM_PURPLE = "#762181"
 PFM_RED = "#F04438"
@@ -32,6 +33,19 @@ def inject_css():
 # ---------------------------
 # Secrets & endpoints
 # ---------------------------
+def _qs_preserve_brackets(pairs: list[tuple[str, object]]) -> str:
+    """
+    Maakt een querystring waarbij we de KEY ongewijzigd laten (dus 'data[]')
+    en alleen de VALUE URL-encoden. Daardoor blijven [] zichtbaar i.p.v. %5B%5D.
+    """
+    parts = []
+    for k, v in pairs:
+        if v is None:
+            continue
+        # laat brackets in KEY staan; encode alleen VALUE (':' laten we toe voor tijden)
+        parts.append(f"{k}={quote(str(v), safe=':')}")
+    return "&".join(parts)
+
 def _safe_get_secret(name: str) -> Optional[str]:
     try:
         val = st.secrets.get(name)
@@ -128,42 +142,27 @@ def build_params_reports_plain(source: str, period: Optional[str], data_ids: Lis
 # ---------------------------
 # HTTP (POST; live logt volledige r.url)
 # ---------------------------
-def api_get_report(params: List[Tuple[str, str]], timeout: int = 40):
+def api_get_report(params: list[tuple[str, str]], timeout: int = 40):
     """
-    Eerst POST met brackets (zoals je aangaf dat nodig is).
-    Fallback naar POST zonder brackets als nodig.
+    POST naar exact de base uit secrets (die bij jou al /get-report is)
+    met een RAW querystring waarin 'data[]' en 'data_output[]' NIET worden ge-URL-encoded.
     """
     api_url_secret = _safe_get_secret("API_URL")
     if not api_url_secret:
         return {"_error": True, "status": 0, "text": "API_URL secret ontbreekt of is leeg", "_url": "<missing:API_URL>", "_method": "POST"}
 
-    report_url = _derive_report_url(api_url_secret)
+    # Verwacht: secrets = "https://vemcount-agent.onrender.com/get-report"
+    base = api_url_secret.rstrip("/")
+    qs = _qs_preserve_brackets(params)  # <-- behoudt [] in keys
+    url = f"{base}?{qs}"
 
-    # 1) Brackets
     try:
-        r1 = requests.post(report_url, params=params, timeout=timeout)
-        if 200 <= r1.status_code < 300:
-            return r1.json()
-        first_fail = f"{r1.status_code} @ {r1.url}"
+        resp = requests.post(url, timeout=timeout)  # geen params= meer!
+        if resp.status_code >= 400:
+            return {"_error": True, "status": resp.status_code, "text": resp.text, "_url": resp.url, "_method": "POST"}
+        return resp.json()
     except Exception as e:
-        first_fail = f"EXC {type(e).__name__}: {e}"
-
-    # 2) Fallback: zonder brackets
-    try:
-        plain: List[Tuple[str,str]] = []
-        for k, v in params:
-            if k == "data[]":
-                plain.append(("data", v))
-            elif k == "data_output[]":
-                plain.append(("data_output", v))
-            else:
-                plain.append((k, v))
-        r2 = requests.post(report_url, params=plain, timeout=timeout)
-        if 200 <= r2.status_code < 300:
-            return r2.json()
-        return {"_error": True, "status": r2.status_code, "text": r2.text, "_url": f"brackets→{first_fail} | plain→{r2.url}", "_method": "POST"}
-    except Exception as e:
-        return {"_error": True, "status": 0, "text": f"brackets→{first_fail} | plain→EXC {type(e).__name__}: {e}", "_url": report_url, "_method": "POST"}
+        return {"_error": True, "status": 0, "text": f"{type(e).__name__}: {e}", "_url": url, "_method": "POST"}
 
 def api_get_live_inside(shop_ids: List[int], source: str = "locations", timeout: int = 15):
     """
