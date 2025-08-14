@@ -1,4 +1,4 @@
-# utils_pfmx.py — clean & robust (fix Optional import order)
+# utils_pfmx.py — live candidates improved, reports use [] keys
 import streamlit as st
 import requests
 import pandas as pd
@@ -9,9 +9,7 @@ from typing import Optional, List, Tuple
 PFM_PURPLE = "#762181"
 PFM_RED = "#F04438"
 
-# ---------------------------
-# UI helpers
-# ---------------------------
+# ---------- UI ----------
 def get_brand_colors():
     succ = st.secrets.get("SUCCESS_COLOR", "#00A650")
     dang = st.secrets.get("DANGER_COLOR", "#D7263D")
@@ -29,11 +27,8 @@ def inject_css():
     css += "</style>"
     st.markdown(css, unsafe_allow_html=True)
 
-# ---------------------------
-# Secrets & endpoint resolution
-# ---------------------------
+# ---------- Secrets & endpoints ----------
 def _safe_get_secret(name: str) -> Optional[str]:
-    """Safe read of Streamlit secret; returns None when missing/empty."""
     try:
         val = st.secrets.get(name)
     except Exception:
@@ -50,7 +45,7 @@ def _host_root_from_api_url(api_url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 def _derive_report_url(api_url_secret: str) -> str:
-    """Exacte /get-report als het al zo is opgegeven, anders <host>/get-report."""
+    """Exact /get-report indien zo opgegeven; anders <host>/get-report."""
     api_url = api_url_secret.strip()
     if api_url.rstrip("/").endswith("/get-report"):
         return api_url.rstrip("/")
@@ -58,15 +53,17 @@ def _derive_report_url(api_url_secret: str) -> str:
 
 def _derive_live_candidates(api_url_secret: str, live_override: Optional[str]) -> List[str]:
     """
-    Mogelijke live-inside endpoints in volgorde van voorkeur:
-      1) LIVE_URL override (abs/rel) -> hoogste prioriteit
-      2) <host>/report/live-inside
-      3) <API_URL>/report/live-inside  (dus inclusief eventuele '/get-report' in de base)
+    Voorkeursvolgorde voor live-inside:
+      1) LIVE_URL override (abs/rel tov host)
+      2) <API_URL>/live-inside            ← zelfde base-pad als /get-report
+      3) <host>/live-inside
+      4) <host>/report/live-inside        ← fallback (oude verwachting)
+      5) <API_URL>/report/live-inside     ← extra fallback
     """
     api_url = api_url_secret.strip()
     root = _host_root_from_api_url(api_url)
-
     cands: List[str] = []
+
     if live_override:
         lo = live_override.strip()
         if lo.startswith(("http://", "https://")):
@@ -74,19 +71,18 @@ def _derive_live_candidates(api_url_secret: str, live_override: Optional[str]) -
         else:
             cands.append(f"{root}/{lo.lstrip('/').rstrip('/')}")
 
+    cands.append(f"{api_url.rstrip('/')}/live-inside")
+    cands.append(f"{root}/live-inside")
     cands.append(f"{root}/report/live-inside")
     cands.append(f"{api_url.rstrip('/')}/report/live-inside")
 
-    # de-duplicate preserving order
     seen = set(); uniq = []
     for u in cands:
         if u not in seen:
             uniq.append(u); seen.add(u)
     return uniq
 
-# ---------------------------
-# Formatting helpers
-# ---------------------------
+# ---------- Formatting ----------
 def fmt_eur(x):
     try:
         return f"€{x:,.0f}".replace(",", ".")
@@ -100,7 +96,6 @@ def fmt_pct(x, digits=1):
         return "0%"
 
 def _no_brackets(params: List[Tuple[str, object]]) -> List[Tuple[str, str]]:
-    """Repeat keys without [] and cast values to str; drop None values."""
     out: List[Tuple[str, str]] = []
     for k, v in params:
         if v is None:
@@ -108,9 +103,9 @@ def _no_brackets(params: List[Tuple[str, object]]) -> List[Tuple[str, str]]:
         out.append((str(k), str(v)))
     return out
 
-# ——— bracket & plain builders (voor report endpoint) ———
+# --- bracket/plain builders voor REPORTS ---
 def build_params_reports_brackets(source: str, period: Optional[str], data_ids: List[int], outputs: List[str]) -> List[Tuple[str,str]]:
-    """data[]=..., data_output[]=..."""
+    """data[]=..., data_output[]=... (zoals jij aangeeft dat nodig is)"""
     p: List[Tuple[str,str]] = [("source", source)]
     if period:
         p.append(("period", period))
@@ -121,7 +116,7 @@ def build_params_reports_brackets(source: str, period: Optional[str], data_ids: 
     return p
 
 def build_params_reports_plain(source: str, period: Optional[str], data_ids: List[int], outputs: List[str]) -> List[Tuple[str,str]]:
-    """data=..., data_output=..."""
+    """data=..., data_output=... (fallback indien nodig)"""
     p: List[Tuple[str,str]] = [("source", source)]
     if period:
         p.append(("period", period))
@@ -131,9 +126,7 @@ def build_params_reports_plain(source: str, period: Optional[str], data_ids: Lis
         p.append(("data_output", str(o)))
     return p
 
-# ---------------------------
-# HTTP (POST, robust; live probeert POST→GET en meerdere URL's)
-# ---------------------------
+# ---------- HTTP ----------
 def api_get_report(params: List[Tuple[str, str]], timeout: int = 40):
     api_url_secret = _safe_get_secret("API_URL")
     if not api_url_secret:
@@ -163,7 +156,6 @@ def api_get_live_inside(shop_ids: List[int], source: str = "locations", timeout:
 
     tried = []
     for url in _derive_live_candidates(api_url_secret, live_override):
-        # 1) POST
         try:
             r = requests.post(url, params=params, timeout=timeout)
             tried.append(f"POST {url} -> {r.status_code}")
@@ -171,8 +163,6 @@ def api_get_live_inside(shop_ids: List[int], source: str = "locations", timeout:
                 return r.json()
         except Exception as e:
             tried.append(f"POST {url} -> EXC {type(e).__name__}: {e}")
-
-        # 2) fallback: GET
         try:
             r = requests.get(url, params=params, timeout=timeout)
             tried.append(f"GET  {url} -> {r.status_code}")
@@ -189,9 +179,7 @@ def api_get_live_inside(shop_ids: List[int], source: str = "locations", timeout:
         "_method": "POST→GET"
     }
 
-# ---------------------------
-# Normalizers & error UI
-# ---------------------------
+# ---------- Normalizers & error UI ----------
 def normalize_vemcount_daylevel(resp_json, kpis=("count_in", "conversion_rate", "turnover", "sales_per_visitor")):
     if not isinstance(resp_json, dict) or resp_json.get("_error"):
         return pd.DataFrame()
